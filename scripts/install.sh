@@ -1,6 +1,10 @@
 #!/bin/bash
 set -e
 
+# Import container utilities
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/container-utils.sh"
+
 # Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -33,14 +37,27 @@ command_exists() {
 }
 
 # Function to check if Docker is running
-check_docker_running() {
+check_container_engine_running() {
+    # Detect container engine
+    CONTAINER_ENGINE=$(detect_container_engine)
     
-    if ! docker info >/dev/null 2>&1; then
-        echo -e "${RED}✗ Docker is not running${NC}"
-        echo -e "${YELLOW}Please start Docker and try again:${NC}"
-        echo -e "${CYAN}1. Open Docker Desktop${NC}"
-        echo -e "${CYAN}2. Wait for Docker to start${NC}"
-        echo -e "${CYAN}3. Run this script again${NC}"
+    if [ -z "$CONTAINER_ENGINE" ]; then
+        echo -e "${RED}✗ No container engine found${NC}"
+        echo -e "${YELLOW}Please install Docker or Podman and try again:${NC}"
+        echo -e "${CYAN}Visit https://docs.docker.com/get-docker/ for Docker installation instructions${NC}"
+        echo -e "${CYAN}Visit https://podman.io/getting-started/installation for Podman installation instructions${NC}"
+        exit 1
+    fi
+    
+    if ! check_container_engine_running; then
+        echo -e "${RED}✗ $CONTAINER_ENGINE is not running${NC}"
+        
+        if [ "$CONTAINER_ENGINE" = "docker" ]; then
+            echo -e "${YELLOW}Please start Docker and try again:${NC}"
+            echo -e "${CYAN}1. Open Docker Desktop${NC}"
+            echo -e "${CYAN}2. Wait for Docker to start${NC}"
+            echo -e "${CYAN}3. Run this script again${NC}"
+        fi
         exit 1
     fi
     echo
@@ -51,26 +68,36 @@ check_requirements() {
     echo -e "${BLUE}Checking System Requirements${NC}"
     echo -e "${CYAN}==============================================================${NC}"
     
-    # Check Docker
-    if ! command_exists docker; then
-        echo -e "${RED}✗ Docker is not installed${NC}"
-        echo -e "${YELLOW}Please install Docker first:${NC}"
-        echo -e "${CYAN}Visit https://docs.docker.com/get-docker/ for installation instructions${NC}"
+    # Check for container engine (Docker or Podman)
+    CONTAINER_ENGINE=$(detect_container_engine)
+    
+    if [ -z "$CONTAINER_ENGINE" ]; then
+        echo -e "${RED}✗ Neither Docker nor Podman is installed${NC}"
+        echo -e "${YELLOW}Please install Docker or Podman first:${NC}"
+        echo -e "${CYAN}Visit https://docs.docker.com/get-docker/ for Docker installation instructions${NC}"
+        echo -e "${CYAN}Visit https://podman.io/getting-started/installation for Podman installation instructions${NC}"
         exit 1
     fi
-    echo -e "${GREEN}✓ Docker is installed${NC}"
+    echo -e "${GREEN}✓ $CONTAINER_ENGINE is installed${NC}"
     
-    # Check if Docker is running
-    check_docker_running
+    # Check if container engine is running
+    check_container_engine_running
     
-    # Check Docker Compose
-    if ! command_exists docker compose; then
-        echo -e "${RED}✗ Docker Compose is not installed${NC}"
-        echo -e "${YELLOW}Please install Docker Compose:${NC}"
-        echo -e "${CYAN}Visit https://docs.docker.com/compose/install/ for installation instructions${NC}"
-        exit 1
+    # Check for compose
+    COMPOSE_CMD=$(get_compose_command)
+    
+    if [ -z "$COMPOSE_CMD" ]; then
+        echo -e "${RED}✗ No compose tool found for $CONTAINER_ENGINE${NC}"
+        install_compose_if_needed
+        
+        # Check again after attempted installation
+        COMPOSE_CMD=$(get_compose_command)
+        if [ -z "$COMPOSE_CMD" ]; then
+            echo -e "${RED}✗ Failed to find or install a compose tool${NC}"
+            exit 1
+        fi
     fi
-    echo -e "${GREEN}✓ Docker Compose is installed${NC}"
+    echo -e "${GREEN}✓ $COMPOSE_CMD is available${NC}"
     
     # Check curl
     if ! command_exists curl; then
@@ -128,7 +155,7 @@ wait_for_service() {
     # No output headers here anymore
     
     while [ $attempt -le $max_attempts ]; do
-        if docker compose ps $service | grep -q "healthy"; then
+        if $COMPOSE_CMD ps $service | grep -q "healthy"; then
             return 0
         fi
         # No progress dots
@@ -183,23 +210,23 @@ main() {
     mkdir -p ck-x-simulator && cd ck-x-simulator
     
     # Download docker-compose.yml
-    echo -e "${YELLOW}Downloading Docker Compose file...${NC}"
+    echo -e "${YELLOW}Downloading Compose file...${NC}"
     curl -fsSL https://raw.githubusercontent.com/nishanb/ck-x/master/docker-compose.yaml -o docker-compose.yml
     
     if [ ! -f docker-compose.yml ]; then
         echo -e "${RED}✗ Failed to download docker-compose.yml${NC}"
         exit 1
     fi
-    echo -e "${GREEN}✓ Docker Compose file downloaded${NC}"
+    echo -e "${GREEN}✓ Compose file downloaded${NC}"
     
     # Pull images
-    echo -e "${YELLOW}Pulling Docker images...${NC}"
-    docker compose pull
-    echo -e "${GREEN}✓ Docker images pulled successfully${NC}"
+    echo -e "${YELLOW}Pulling container images...${NC}"
+    $COMPOSE_CMD pull
+    echo -e "${GREEN}✓ Container images pulled successfully${NC}"
     
     # Start services
     echo -e "${YELLOW}Starting CK-X services...${NC}"
-    docker compose up -d
+    $COMPOSE_CMD up -d
     echo -e "${GREEN}✓ Services started${NC}"
     
     # Combined waiting message instead of individual service wait messages
@@ -221,10 +248,17 @@ main() {
     echo -e "\n${BLUE}Useful Commands${NC}"
     echo -e "${CYAN}==============================================================${NC}"
     echo -e "${YELLOW}CK-X Simulator has been installed in:${NC} ${GREEN}$(pwd)${NC}, run all below commands from this directory"
-    echo -e "${YELLOW}To stop CK-X  ${GREEN}docker compose down --volumes --remove-orphans --rmi all${NC}"
-    echo -e "${YELLOW}To Restart CK-X:${NC} ${GREEN}docker compose restart${NC}"
-    echo -e "${YELLOW}To clean up all containers and images:${NC} ${GREEN}docker system prune -a${NC}"
-    echo -e "${YELLOW}To remove only CK-X images:${NC} ${GREEN}docker compose down --rmi all${NC}"
+    echo -e "${YELLOW}To stop CK-X  ${GREEN}$COMPOSE_CMD down --volumes --remove-orphans --rmi all${NC}"
+    echo -e "${YELLOW}To Restart CK-X:${NC} ${GREEN}$COMPOSE_CMD restart${NC}"
+    
+    if [ "$CONTAINER_ENGINE" = "docker" ]; then
+        echo -e "${YELLOW}To clean up all containers and images:${NC} ${GREEN}docker system prune -a${NC}"
+        echo -e "${YELLOW}To remove only CK-X images:${NC} ${GREEN}$COMPOSE_CMD down --rmi all${NC}"
+    elif [ "$CONTAINER_ENGINE" = "podman" ]; then
+        echo -e "${YELLOW}To clean up all containers and images:${NC} ${GREEN}podman system prune -a${NC}"
+        echo -e "${YELLOW}To remove only CK-X images:${NC} ${GREEN}$COMPOSE_CMD down --rmi all${NC}"
+    fi
+    
     echo -e "${YELLOW}To access CK-X Simulator:${NC} ${GREEN}https://play.sailor.sh/${NC}"
     echo
     echo -e "${CYAN}Thank you for installing CK-X Simulator!${NC}"

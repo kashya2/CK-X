@@ -1,8 +1,19 @@
 #!/bin/bash
 
-# Script to build and push Docker images for CK-X Simulator
-# This script builds all images defined in the compose.yaml file and pushes them to Docker Hub
+# Script to build and push container images for CK-X Simulator
+# This script builds all images defined in the compose.yaml file and pushes them to a container registry
 # Supports multi-architecture builds (linux/amd64 and linux/arm64)
+
+# Import container utilities
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../container-utils.sh"
+
+# Detect container engine
+CONTAINER_ENGINE=$(detect_container_engine)
+if [ -z "$CONTAINER_ENGINE" ]; then
+    echo "Error: No container engine (Docker or Podman) found. Please install Docker or Podman and try again."
+    exit 1
+fi
 
 # Set variables
 DOCKER_HUB_USERNAME=${DOCKER_HUB_USERNAME:-nishanb}
@@ -27,58 +38,96 @@ echo -e "${GREEN}  CK-X Simulator - Build & Push Tool  ${NC}"
 echo -e "${GREEN}=======================================${NC}"
 echo
 
-# Check if buildx is available
-echo -e "${YELLOW}Checking Docker buildx availability...${NC}"
-if ! docker buildx version > /dev/null 2>&1; then
-    echo -e "${RED}Docker buildx is not available. Please ensure you have Docker 19.03 or newer with experimental features enabled.${NC}"
-    exit 1
-fi
-echo -e "${GREEN}Docker buildx is available.${NC}"
+# Check if buildx/buildah is available
+if [ "$CONTAINER_ENGINE" = "docker" ]; then
+    echo -e "${YELLOW}Checking Docker buildx availability...${NC}"
+    if ! docker buildx version > /dev/null 2>&1; then
+        echo -e "${RED}Docker buildx is not available. Please ensure you have Docker 19.03 or newer with experimental features enabled.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}Docker buildx is available.${NC}"
 
-# Create a new builder instance if it doesn't exist
-BUILDER_NAME="ck-x-multiarch-builder"
-if ! docker buildx inspect ${BUILDER_NAME} > /dev/null 2>&1; then
-    echo -e "${YELLOW}Creating new buildx builder: ${BUILDER_NAME}${NC}"
-    docker buildx create --name ${BUILDER_NAME} --use --bootstrap
-else
-    echo -e "${YELLOW}Using existing buildx builder: ${BUILDER_NAME}${NC}"
-    docker buildx use ${BUILDER_NAME}
-fi
+    # Create a new builder instance if it doesn't exist
+    BUILDER_NAME="ck-x-multiarch-builder"
+    if ! docker buildx inspect ${BUILDER_NAME} > /dev/null 2>&1; then
+        echo -e "${YELLOW}Creating new buildx builder: ${BUILDER_NAME}${NC}"
+        docker buildx create --name ${BUILDER_NAME} --use --bootstrap
+    else
+        echo -e "${YELLOW}Using existing buildx builder: ${BUILDER_NAME}${NC}"
+        docker buildx use ${BUILDER_NAME}
+    fi
 
-# Ensure the builder is running
-echo -e "${YELLOW}Bootstrapping buildx builder...${NC}"
-docker buildx inspect --bootstrap
-echo -e "${GREEN}Buildx builder is ready.${NC}"
+    # Ensure the builder is running
+    echo -e "${YELLOW}Bootstrapping buildx builder...${NC}"
+    docker buildx inspect --bootstrap
+    echo -e "${GREEN}Buildx builder is ready.${NC}"
+elif [ "$CONTAINER_ENGINE" = "podman" ]; then
+    echo -e "${YELLOW}Checking Podman version and capabilities...${NC}"
+    if ! podman --version | grep -q "podman version"; then
+        echo -e "${RED}Podman command not functioning properly.${NC}"
+        exit 1
+    fi
+    
+    # Check if podman can build multi-architecture images
+    if ! podman build --help | grep -q -- "--platform"; then
+        echo -e "${RED}This version of Podman doesn't support multi-architecture builds.${NC}"
+        echo -e "${YELLOW}Please upgrade to Podman 4.0 or newer for full multi-architecture support.${NC}"
+        
+        # Ask if user wants to continue with single architecture builds
+        read -p "Continue with single architecture builds? (y/N) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo -e "${YELLOW}Operation cancelled by user.${NC}"
+            exit 0
+        fi
+        # Set platforms to current architecture only
+        PLATFORMS="$(podman info --format '{{.Host.Arch}}')"
+        echo -e "${YELLOW}Continuing with single architecture: ${PLATFORMS}${NC}"
+    else
+        echo -e "${GREEN}Podman with multi-architecture support is available.${NC}"
+    fi
+fi
 echo
 
-# Check if user is logged in to Docker Hub (with option to skip)
+# Check if user is logged in to container registry (with option to skip)
 if [ "$SKIP_LOGIN_CHECK" != "true" ]; then
-    echo -e "${YELLOW}Checking Docker Hub login status...${NC}"
+    echo -e "${YELLOW}Checking registry login status...${NC}"
     
-    # Try multiple methods to check login status
-    if [ -f ~/.docker/config.json ]; then
-        if grep -q "auth" ~/.docker/config.json; then
-            echo -e "${GREEN}Docker credentials found in config file.${NC}"
+    if [ "$CONTAINER_ENGINE" = "docker" ]; then
+        # Try multiple methods to check login status for Docker
+        if [ -f ~/.docker/config.json ]; then
+            if grep -q "auth" ~/.docker/config.json; then
+                echo -e "${GREEN}Docker credentials found in config file.${NC}"
+                LOGIN_STATUS=0
+            else
+                echo -e "${RED}No credentials found in Docker config file.${NC}"
+                LOGIN_STATUS=1
+            fi
+        else
+            # Try the docker info method
+            docker info 2>/dev/null | grep -q Username
+            LOGIN_STATUS=$?
+            
+            if [ $LOGIN_STATUS -ne 0 ]; then
+                echo -e "${RED}You do not appear to be logged in to Docker Hub.${NC}"
+            else
+                echo -e "${GREEN}You appear to be logged in to Docker Hub.${NC}"
+            fi
+        fi
+    elif [ "$CONTAINER_ENGINE" = "podman" ]; then
+        # Check login status for Podman
+        if podman login --get-login docker.io > /dev/null 2>&1; then
+            echo -e "${GREEN}You appear to be logged in to Docker Hub with Podman.${NC}"
             LOGIN_STATUS=0
         else
-            echo -e "${RED}No credentials found in Docker config file.${NC}"
+            echo -e "${RED}You do not appear to be logged in to Docker Hub with Podman.${NC}"
             LOGIN_STATUS=1
-        fi
-    else
-        # Try the docker info method
-        docker info 2>/dev/null | grep -q Username
-        LOGIN_STATUS=$?
-        
-        if [ $LOGIN_STATUS -ne 0 ]; then
-            echo -e "${RED}You do not appear to be logged in to Docker Hub.${NC}"
-        else
-            echo -e "${GREEN}You appear to be logged in to Docker Hub.${NC}"
         fi
     fi
     
     # Allow user to continue anyway
     if [ $LOGIN_STATUS -ne 0 ]; then
-        echo -e "${YELLOW}You might need to log in using: docker login${NC}"
+        echo -e "${YELLOW}You might need to log in using: ${CONTAINER_ENGINE} login${NC}"
         echo -e "${YELLOW}However, you can still continue if you're sure you're logged in.${NC}"
         read -p "Continue anyway? (y/N) " -n 1 -r
         echo
@@ -88,10 +137,10 @@ if [ "$SKIP_LOGIN_CHECK" != "true" ]; then
         fi
         echo -e "${GREEN}Continuing with build and push process...${NC}"
     else
-        echo -e "${GREEN}You are logged in to Docker Hub.${NC}"
+        echo -e "${GREEN}You are logged in to container registry.${NC}"
     fi
 else
-    echo -e "${YELLOW}Skipping Docker Hub login check as requested.${NC}"
+    echo -e "${YELLOW}Skipping registry login check as requested.${NC}"
 fi
 echo
 
@@ -118,15 +167,79 @@ build_and_push() {
         exit 1
     fi
     
-    # Build and push the multi-architecture image in one command
-    echo -e "${YELLOW}Building and pushing image for multiple architectures...${NC}"
-    docker buildx build \
-        --platform=${PLATFORMS} \
-        --tag ${IMAGE_NAME} \
-        --push \
-        ${CONTEXT_PATH}
+    # Build and push based on container engine
+    if [ "$CONTAINER_ENGINE" = "docker" ]; then
+        # Docker with buildx
+        echo -e "${YELLOW}Building and pushing image with Docker buildx...${NC}"
+        docker buildx build \
+            --platform=${PLATFORMS} \
+            --tag ${IMAGE_NAME} \
+            --push \
+            ${CONTEXT_PATH}
+        BUILD_STATUS=$?
+    elif [ "$CONTAINER_ENGINE" = "podman" ]; then
+        # Podman approach
+        echo -e "${YELLOW}Building and pushing image with Podman...${NC}"
+        
+        # Check if we're doing multi-arch build
+        if [[ "$PLATFORMS" == *","* ]]; then
+            # Multi-arch build with podman
+            # We need to build separately for each platform and create a manifest
+            MANIFEST_NAME="${IMAGE_NAME}"
+            PLATFORM_LIST=(${PLATFORMS//,/ })
+            
+            # Remove any existing manifest with this name
+            podman manifest rm ${MANIFEST_NAME} 2>/dev/null || true
+            
+            # Create a new manifest
+            podman manifest create ${MANIFEST_NAME}
+            
+            for PLATFORM in "${PLATFORM_LIST[@]}"; do
+                PLATFORM_TAG="${IMAGE_NAME}-${PLATFORM//\//-}"
+                echo -e "${YELLOW}Building for platform: ${PLATFORM}${NC}"
+                
+                podman build \
+                    --platform=${PLATFORM} \
+                    --tag ${PLATFORM_TAG} \
+                    ${CONTEXT_PATH}
+                
+                if [ $? -ne 0 ]; then
+                    echo -e "${RED}Failed to build image for platform ${PLATFORM}${NC}"
+                    continue
+                fi
+                
+                # Push the platform-specific image
+                podman push ${PLATFORM_TAG}
+                
+                if [ $? -ne 0 ]; then
+                    echo -e "${RED}Failed to push image for platform ${PLATFORM}${NC}"
+                    continue
+                fi
+                
+                # Add to manifest
+                podman manifest add ${MANIFEST_NAME} ${PLATFORM_TAG}
+            done
+            
+            # Push the manifest
+            podman manifest push ${MANIFEST_NAME} docker://${MANIFEST_NAME}
+            BUILD_STATUS=$?
+        else
+            # Single architecture build
+            podman build \
+                --platform=${PLATFORMS} \
+                --tag ${IMAGE_NAME} \
+                ${CONTEXT_PATH}
+                
+            if [ $? -eq 0 ]; then
+                podman push ${IMAGE_NAME}
+                BUILD_STATUS=$?
+            else
+                BUILD_STATUS=1
+            fi
+        fi
+    fi
     
-    if [ $? -eq 0 ]; then
+    if [ $BUILD_STATUS -eq 0 ]; then
         echo -e "${GREEN}Successfully built and pushed ${IMAGE_NAME} for platforms: ${PLATFORMS}${NC}"
     else
         echo -e "${RED}Failed to build/push ${IMAGE_NAME}${NC}"
@@ -145,6 +258,7 @@ echo " - ${REGISTRY}/ck-x-simulator-jumphost:${TAG}"
 echo " - ${REGISTRY}/ck-x-simulator-remote-terminal:${TAG}"
 echo " - ${REGISTRY}/ck-x-simulator-cluster:${TAG}"
 echo " - ${REGISTRY}/ck-x-simulator-facilitator:${TAG}"
+echo -e "${YELLOW}Using container engine: ${CONTAINER_ENGINE}${NC}"
 echo
 read -p "Do you want to continue? (y/N) " -n 1 -r
 echo
@@ -182,6 +296,7 @@ echo -e "${GREEN}=======================================${NC}"
 echo -e "${GREEN}  All multi-architecture images built and pushed successfully!  ${NC}"
 echo -e "${GREEN}  Tag: ${TAG}  ${NC}"
 echo -e "${GREEN}  Platforms: ${PLATFORMS}  ${NC}"
+echo -e "${GREEN}  Container Engine: ${CONTAINER_ENGINE}  ${NC}"
 echo -e "${GREEN}=======================================${NC}"
 
 # Done

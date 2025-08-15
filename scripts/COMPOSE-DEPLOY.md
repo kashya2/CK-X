@@ -4,7 +4,15 @@ This guide provides instructions for deploying the CK-X Simulator on different o
 
 ## Prerequisites
 
+### For Docker
 - Docker Desktop (Windows/Mac) or Docker Engine (Linux)
+- Docker Compose (included with Docker Desktop or needs to be installed separately)
+
+### For Podman
+- Podman installed
+- podman-compose installed (`pip3 install podman-compose`)
+
+### System Requirements
 - 4GB RAM minimum (8GB recommended)
 - 10GB free disk space
 - Internet connection
@@ -20,7 +28,7 @@ Open Terminal and run:
 curl -fsSL https://raw.githubusercontent.com/nishanb/CK-X/master/scripts/install.sh | bash
 ```
 
-or, if the current user does not have the permission to run docker commands:
+or, if the current user does not have the permission to run container commands:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/nishanb/CK-X/master/scripts/install.sh | sudo bash
@@ -36,7 +44,7 @@ irm https://raw.githubusercontent.com/nishanb/CK-X/master/scripts/install.ps1 | 
 
 ## Manual Installation
 
-# By cloning the repository
+### By cloning the repository
 
 1. Clone the repository:
    ```bash
@@ -44,9 +52,16 @@ irm https://raw.githubusercontent.com/nishanb/CK-X/master/scripts/install.ps1 | 
    cd CK-X
    ```
 
-2. Build and start the services using Docker Compose:
+2. Build and start the services using Docker or Podman:
+   
+   **With Docker:**
    ```bash
    docker compose up -d
+   ```
+   
+   **With Podman:**
+   ```bash
+   podman-compose up -d
    ```
 
 ### Via Script 

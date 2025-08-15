@@ -10,12 +10,30 @@
 #   ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝     ╚══════╝╚═╝╚═╝     ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 #                                                                                                                 
 # ===============================================================================
-#  Docker Compose CKAD Deployment Script
+#  Compose CKAD Deployment Script
 #  Version: 1.0.0
 #  Author: Nishan B
 # ===============================================================================
 
 set -e
+
+# Import container utilities
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/scripts/container-utils.sh"
+
+# Detect container engine
+CONTAINER_ENGINE=$(detect_container_engine)
+if [ -z "$CONTAINER_ENGINE" ]; then
+    echo "Error: No container engine (Docker or Podman) found. Please install Docker or Podman and try again."
+    exit 1
+fi
+
+# Get compose command
+COMPOSE_CMD=$(get_compose_command)
+if [ -z "$COMPOSE_CMD" ]; then
+    echo "Error: No compose tool found for $CONTAINER_ENGINE. Please install the appropriate compose tool and try again."
+    exit 1
+fi
 
 # Define colors for better readability
 RED='\033[0;31m'
@@ -109,26 +127,26 @@ trap 'handle_error $LINENO' ERR
 # ===============================================================================
 
 print_header "DEPLOYMENT STARTED"
-print_info "Starting deployment process for CKAD Simulator with Docker Compose"
+print_info "Starting deployment process for CKAD Simulator with $CONTAINER_ENGINE and $COMPOSE_CMD"
 
 # ===============================================================================
-# DOCKER IMAGE BUILDING
+# CONTAINER IMAGE BUILDING
 # ===============================================================================
 
-print_header "DOCKER IMAGE BUILDING"
+print_header "CONTAINER IMAGE BUILDING"
 
-print_progress "Building Docker images via Docker Compose..."
-COMPOSE_BAKE=true docker compose build 
-print_success "All Docker images built successfully"
+print_progress "Building container images via $COMPOSE_CMD..."
+COMPOSE_BAKE=true $COMPOSE_CMD build 
+print_success "All container images built successfully"
 
 # ===============================================================================
 # DOCKER COMPOSE DEPLOYMENT
 # ===============================================================================
 
-print_header "DOCKER COMPOSE DEPLOYMENT"
+print_header "COMPOSE DEPLOYMENT"
 
-print_progress "Starting Docker Compose services..."
-docker compose up -d --remove-orphans
+print_progress "Starting $COMPOSE_CMD services..."
+$COMPOSE_CMD up -d --remove-orphans
 print_success "All services started successfully"
 
 # ===============================================================================
@@ -141,35 +159,35 @@ print_progress "${CLOCK} Waiting for services to be ready..."
 sleep 15 # Give some time for services to start
 
 # Check if the VNC service is running
-if docker compose ps remote-desktop | grep "Up"; then
+if $COMPOSE_CMD ps remote-desktop | grep "Up"; then
   print_success "VNC service is running"
 else
   print_warning "VNC service may not be running properly"
 fi
 
 # Check if the webapp service is running
-if docker compose ps webapp | grep "Up"; then
+if $COMPOSE_CMD ps webapp | grep "Up"; then
   print_success "Webapp service is running"
 else
   print_warning "Webapp service may not be running properly"
 fi
 
 # Check if the Nginx service is running
-if docker compose ps nginx | grep "Up"; then
+if $COMPOSE_CMD ps nginx | grep "Up"; then
   print_success "Nginx service is running"
 else
   print_warning "Nginx service may not be running properly"
 fi
 
 # Check if the jumphost service is running
-if docker compose ps jumphost | grep "Up"; then
+if $COMPOSE_CMD ps jumphost | grep "Up"; then
   print_success "Jump host service is running"
 else
   print_warning "Jump host service may not be running properly"
 fi
 
 # Check if the Kubernetes cluster service is running
-if docker compose ps k8s-api-server | grep "Up"; then
+if $COMPOSE_CMD ps k8s-api-server | grep "Up"; then
   print_success "Kubernetes cluster is running"
   
   # Wait for the KIND cluster to be fully ready
@@ -177,7 +195,7 @@ if docker compose ps k8s-api-server | grep "Up"; then
   sleep 30
   
   # Check if cluster is accessible
-  if docker compose exec k8s-api-server kind get clusters | grep "kind-cluster"; then
+  if $COMPOSE_CMD exec k8s-api-server kind get clusters | grep "kind-cluster"; then
     print_success "KIND cluster is operational and accessible"
   else
     print_warning "KIND cluster may still be initializing"
@@ -194,7 +212,7 @@ TOTAL_TIME=$(elapsed_time)
 
 print_header 'DEPLOYMENT SUMMARY'
 echo -e "${STAR} ${GREEN}Deployment completed successfully!${NC}"
-echo -e "${INFO} ${CYAN}Environment:${NC}           CKAD Simulator (Docker Compose)"
+echo -e "${INFO} ${CYAN}Environment:${NC}           CKAD Simulator (${CONTAINER_ENGINE} with ${COMPOSE_CMD})"
 echo -e "${INFO} ${CYAN}Services deployed:${NC}     5 (remote-desktop, webapp, nginx, jumphost, k8s-api-server)"
 echo -e "${INFO} ${CYAN}Total elapsed time:${NC}    ${YELLOW}${TOTAL_TIME}${NC}"
 
@@ -226,10 +244,10 @@ echo -e "${INFO} ${GRAY}Note: All other services (VNC, jumphost, K8s) are only a
 print_header "HELPFUL COMMANDS"
 
 echo -e "${CYAN}To stop the environment:${NC}"
-echo -e "  ${GREEN}docker compose down --volumes --remove-orphans${NC}"
+echo -e "  ${GREEN}$COMPOSE_CMD down --volumes --remove-orphans${NC}"
 
 echo -e "\n${CYAN}To restart the environment:${NC}"
-echo -e "  ${GREEN}docker compose restart${NC}"
+echo -e "  ${GREEN}$COMPOSE_CMD restart${NC}"
 
 echo -e "\n${CYAN}To view logs:${NC}"
-echo -e "  ${GREEN}docker compose logs -f${NC}"
+echo -e "  ${GREEN}$COMPOSE_CMD logs -f${NC}"

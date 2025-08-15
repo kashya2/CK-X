@@ -11,7 +11,7 @@ A powerful Kubernetes certification practice environment that provides a realist
 - **Realistic exam environment** with web-based interface and remote desktop support
 - Comprehensive practice labs for **CKAD, CKA, CKS**, and other Kubernetes certifications
 - **Smart evaluation system** with real-time solution verification
-- **Docker-based deployment** for easy setup and consistent environment
+- **Container-based deployment** supporting Docker, Podman, and other OCI-compatible engines
 - **Timed exam mode** with real exam-like conditions and countdown timer 
 
 
@@ -35,6 +35,9 @@ irm https://raw.githubusercontent.com/nishanb/ck-x/master/scripts/install.ps1 | 
 
 ### Manual Installation
 For detailed installation instructions, please refer to our [Deployment Guide](scripts/COMPOSE-DEPLOY.md).
+
+### Podman Support
+CK-X Simulator now supports Podman as an alternative to Docker. See our [Podman Support Guide](docs/podman-support.md) for details.
 
 ## Community & Support
 
